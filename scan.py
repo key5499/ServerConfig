@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 import os
+import json
 import base64
 from datetime import datetime
 import requests
 import subprocess
+import getpass  # 用于安全输入Token
 
-# 加密的GitHub Token (Base64编码)
-ENCODED_TOKEN = "Z2hwX2VtdGhxVWg3NGg3dFRWNWZzSWNHcWNONDVoYWZzazJRYm5ZQQ=="
-GITHUB_TOKEN = base64.b64decode(ENCODED_TOKEN).decode('utf-8')
-
-# 配置参数
+# 配置参数（不包含敏感信息）
 REPO_OWNER = "key5499"
 REPO_NAME = "ServerConfig"
 BRANCH = "main"
 SCAN_RESULTS_DIR = "scan_results"
-PORTS = [80, 443, 22, 21, 3389, 8080]  # 要扫描的端口列表
-SCAN_RATE = 1000  # 扫描速率
+PORTS = [4899, 7899]  # 要扫描的端口列表
+SCAN_RATE = 20000  # 扫描速率
+
+def get_github_token():
+    """安全地从命令行获取GitHub Token"""
+    print("\n请输入GitHub个人访问令牌（输入时不会显示）")
+    print("注意：Token需要repo权限")
+    print("获取地址：https://github.com/settings/tokens/new?scopes=repo")
+    return getpass.getpass("Token: ").strip()
 
 def run_masscan(port):
     """运行masscan扫描指定端口"""
@@ -24,90 +29,80 @@ def run_masscan(port):
     try:
         cmd = [
             "masscan",
-            "-iL", "ip.txt",  # 假设ip.txt已存在本地
+            "-iL", "ip.txt",
             "-p", str(port),
             "--rate", str(SCAN_RATE),
             "-oJ", output_file
         ]
         
         subprocess.run(cmd, check=True)
-        
-        if not os.path.exists(output_file) or os.path.getsize(output_file) == 0:
-            return None
-            
-        return output_file
+        return output_file if os.path.exists(output_file) and os.path.getsize(output_file) > 0 else None
     except subprocess.CalledProcessError as e:
         print(f"扫描端口 {port} 失败: {e}")
         return None
 
-def extract_ips_from_result(result_file):
+def extract_ips(result_file):
     """从扫描结果中提取IP地址"""
     try:
-        with open(result_file, "r") as f:
-            data = json.load(f)
-            
-        ips = set()
-        for item in data:
-            ips.add(item["ip"])
-            
-        return sorted(ips)
+        with open(result_file) as f:
+            return sorted({item["ip"] for item in json.load(f)})
     except Exception as e:
         print(f"解析扫描结果失败: {e}")
         return []
 
-def upload_to_github(port, ips):
-    """将扫描结果上传到GitHub"""
+def upload_results(port, ips, token):
+    """上传结果到GitHub"""
     if not ips:
-        print(f"端口 {port} 没有发现开放IP，跳过上传")
+        print(f"端口 {port} 无开放主机，跳过上传")
         return
-        
+
+    # 准备文件内容
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{timestamp}_{port}_{len(ips)}.txt"
     content = "\n".join(ips) + "\n"
     
-    # Base64编码内容
-    content_b64 = base64.b64encode(content.encode("utf-8")).decode("utf-8")
-    
-    # 准备API请求
+    # API请求配置
     url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{SCAN_RESULTS_DIR}/{filename}"
     headers = {
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28"
     }
     data = {
-        "message": f"添加扫描结果 {port} ({len(ips)}个IP)",
-        "content": content_b64,
+        "message": f"Add scan results for port {port}",
+        "content": base64.b64encode(content.encode()).decode(),
         "branch": BRANCH
     }
-    
+
+    # 执行上传
     try:
         response = requests.put(url, headers=headers, json=data)
         response.raise_for_status()
-        print(f"成功上传结果: {filename}")
+        print(f"结果已上传: {filename}")
+    except requests.HTTPError as e:
+        print(f"上传失败 (HTTP {response.status_code}): {response.text}")
     except Exception as e:
-        print(f"上传结果失败: {e}")
+        print(f"上传出错: {str(e)}")
 
 def main():
-    # 扫描每个端口
-    for port in PORTS:
-        print(f"\n开始扫描端口 {port}...")
-        
-        # 运行扫描
-        result_file = run_masscan(port)
-        if not result_file:
-            continue
-            
-        # 提取IP地址
-        ips = extract_ips_from_result(result_file)
-        
-        # 上传结果
-        upload_to_github(port, ips)
-        
-        # 清理临时文件
-        os.remove(result_file)
+    # 1. 获取GitHub Token
+    token = get_github_token()
     
-    print("\n所有端口扫描完成!")
+    # 2. 检查ip.txt是否存在
+    if not os.path.exists("ip.txt"):
+        print("错误：当前目录下未找到ip.txt文件")
+        print("请创建包含IP地址列表的ip.txt文件（每行一个IP）")
+        return
+
+    # 3. 扫描并上传结果
+    for port in PORTS:
+        print(f"\n扫描端口 {port}...")
+        if result_file := run_masscan(port):
+            if ips := extract_ips(result_file):
+                upload_results(port, ips, token)
+            os.remove(result_file)
+
+    print("\n扫描任务完成")
 
 if __name__ == "__main__":
     main()
