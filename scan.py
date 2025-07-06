@@ -8,7 +8,7 @@ import requests
 import subprocess
 
 # 配置参数
-GITHUB_TOKEN = "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"
+GITHUB_TOKEN = ""
 REPO_OWNER = "key5499"
 REPO_NAME = "ServerConfig"
 BRANCH = "main"
