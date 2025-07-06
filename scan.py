@@ -1,44 +1,21 @@
 #!/usr/bin/env python3
 import os
-import sys
-import json
 import base64
 from datetime import datetime
 import requests
 import subprocess
 
+# 加密的GitHub Token (Base64编码)
+ENCODED_TOKEN = "Z2hwX2VtdGhxVWg3NGg3dFRWNWZzSWNHcWNONDVoYWZzazJRYm5ZQQ=="
+GITHUB_TOKEN = base64.b64decode(ENCODED_TOKEN).decode('utf-8')
+
 # 配置参数
-GITHUB_TOKEN = ""
 REPO_OWNER = "key5499"
 REPO_NAME = "ServerConfig"
 BRANCH = "main"
-IP_FILE_PATH = "ip.txt"  # 仓库根目录下的ip.txt
 SCAN_RESULTS_DIR = "scan_results"
-PORTS = [4899, 7899]  # 要扫描的端口列表
+PORTS = [80, 443, 22, 21, 3389, 8080]  # 要扫描的端口列表
 SCAN_RATE = 1000  # 扫描速率
-
-def download_ip_file():
-    """从GitHub下载IP列表文件"""
-    url = f"https://raw.githubusercontent.com/{REPO_OWNER}/{REPO_NAME}/{BRANCH}/{IP_FILE_PATH}"
-    headers = {
-        "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3.raw"
-    }
-    
-    try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        
-        with open("ip.txt", "wb") as f:
-            f.write(response.content)
-            
-        if os.path.getsize("ip.txt") == 0:
-            raise Exception("下载的IP文件为空")
-            
-        print("成功下载IP列表文件")
-    except Exception as e:
-        print(f"下载IP文件失败: {e}")
-        sys.exit(1)
 
 def run_masscan(port):
     """运行masscan扫描指定端口"""
@@ -46,8 +23,8 @@ def run_masscan(port):
     
     try:
         cmd = [
-            "sudo", "masscan",
-            "-iL", "ip.txt",
+            "masscan",
+            "-iL", "ip.txt",  # 假设ip.txt已存在本地
             "-p", str(port),
             "--rate", str(SCAN_RATE),
             "-oJ", output_file
@@ -94,8 +71,9 @@ def upload_to_github(port, ips):
     # 准备API请求
     url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/contents/{SCAN_RESULTS_DIR}/{filename}"
     headers = {
-        "Authorization": f"token {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v3+json"
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28"
     }
     data = {
         "message": f"添加扫描结果 {port} ({len(ips)}个IP)",
@@ -110,36 +88,7 @@ def upload_to_github(port, ips):
     except Exception as e:
         print(f"上传结果失败: {e}")
 
-def check_masscan_installed():
-    """检查masscan是否已安装"""
-    try:
-        subprocess.run(["masscan", "--version"], 
-                      stdout=subprocess.PIPE, 
-                      stderr=subprocess.PIPE,
-                      check=True)
-        return True
-    except:
-        return False
-
-def install_masscan():
-    """安装masscan"""
-    print("正在安装masscan...")
-    try:
-        subprocess.run(["sudo", "apt-get", "update"], check=True)
-        subprocess.run(["sudo", "apt-get", "install", "-y", "masscan"], check=True)
-        print("masscan安装成功")
-    except subprocess.CalledProcessError as e:
-        print(f"安装masscan失败: {e}")
-        sys.exit(1)
-
 def main():
-    # 检查并安装masscan
-    if not check_masscan_installed():
-        install_masscan()
-    
-    # 下载IP列表
-    # download_ip_file()
-    
     # 扫描每个端口
     for port in PORTS:
         print(f"\n开始扫描端口 {port}...")
@@ -158,8 +107,6 @@ def main():
         # 清理临时文件
         os.remove(result_file)
     
-    # 清理IP文件
-    os.remove("ip.txt")
     print("\n所有端口扫描完成!")
 
 if __name__ == "__main__":
